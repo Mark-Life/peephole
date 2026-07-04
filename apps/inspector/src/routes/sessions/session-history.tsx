@@ -190,10 +190,7 @@ export const SessionHistory = ({
   );
 
   return (
-    <section
-      className="flex flex-col gap-3 rounded-lg border border-border p-4"
-      data-testid="session-history"
-    >
+    <section className="flex flex-col gap-3" data-testid="session-history">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="font-semibold text-base">Full history</h2>
         <div className="flex items-center gap-2 text-sm">

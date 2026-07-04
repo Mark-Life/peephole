@@ -7,13 +7,13 @@
 import { useSyncExternalStore } from "react";
 
 /** The three inspector sections, in nav order. */
-export const ROUTES = ["memory", "sessions", "capabilities"] as const;
+export const ROUTES = ["sessions", "memory", "capabilities"] as const;
 
 /** A routable section id. */
 export type RouteId = (typeof ROUTES)[number];
 
 /** Default section when the hash is empty or unrecognized. */
-const DEFAULT_ROUTE: RouteId = "memory";
+const DEFAULT_ROUTE: RouteId = "sessions";
 
 /** Strip a leading `#` and optional `/` from the hash. */
 const HASH_PREFIX = /^#\/?/;

@@ -33,7 +33,7 @@ export const SessionDetail = ({
   return (
     <div className="flex flex-col gap-4" data-testid="session-detail">
       <Button
-        className="w-fit"
+        className="w-fit md:hidden"
         data-testid="session-back"
         onClick={onBack}
         size="sm"

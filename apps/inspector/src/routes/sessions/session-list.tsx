@@ -2,7 +2,8 @@
  *
  * Headers are the lightweight `SessionHeader` rows (no body parse). Filters span
  * project / gitBranch / model / start-date; free-text search matches the title
- * (and id). Clicking a row hands its id up to open the debug view.
+ * (and id). Rendered as a compact vertical list so it can live in the
+ * master-detail left rail; the active row is highlighted via `selectedId`.
  */
 import type { SessionHeader } from "@workspace/core/services/sessions/schema";
 import { Badge } from "@workspace/ui/components/badge";
@@ -14,14 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@workspace/ui/components/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@workspace/ui/components/table";
+import { cn } from "@workspace/ui/lib/utils";
 import { useMemo, useState } from "react";
 import { fmtBytes } from "../../lib/session-format";
 
@@ -41,6 +35,10 @@ const distinct = (
 const dayOf = (iso: string | undefined): string =>
   iso ? (iso.slice(0, 10) ?? "") : "";
 
+/** `YYYY-MM-DD HH:MM` of an ISO timestamp, or `"—"`. */
+const fmtStarted = (iso: string | undefined): string =>
+  iso ? iso.slice(0, TS_MINUTE).replace("T", " ") : "—";
+
 /** A labelled filter `Select` over `all` + the distinct option values. */
 const FilterSelect = ({
   label,
@@ -56,7 +54,7 @@ const FilterSelect = ({
   readonly testId: string;
 }) => (
   <Select onValueChange={onChange} value={value}>
-    <SelectTrigger className="w-44" data-testid={testId}>
+    <SelectTrigger className="w-full" data-testid={testId}>
       <SelectValue placeholder={label} />
     </SelectTrigger>
     <SelectContent>
@@ -105,12 +103,63 @@ const matches = ({
   return true;
 };
 
-/** The filter bar + sortable header table; rows call `onOpen(id)`. */
+/** One session row in the rail; highlighted when it is the active selection. */
+const SessionRow = ({
+  h,
+  active,
+  onOpen,
+}: {
+  readonly h: SessionHeader;
+  readonly active: boolean;
+  readonly onOpen: (id: string) => void;
+}) => (
+  <button
+    aria-current={active ? "true" : undefined}
+    className={cn(
+      "flex w-full flex-col gap-1.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+      active
+        ? "border-primary/40 bg-primary/10"
+        : "border-border hover:bg-muted"
+    )}
+    data-testid="session-row"
+    onClick={() => onOpen(h.id)}
+    type="button"
+  >
+    <div className="flex items-baseline justify-between gap-2">
+      <span className="truncate font-medium text-sm">
+        {h.title ?? "Untitled session"}
+      </span>
+      <span className="shrink-0 text-muted-foreground text-xs tabular-nums">
+        {h.messageCount} msgs
+      </span>
+    </div>
+    <div className="flex items-center gap-2 text-muted-foreground text-xs">
+      <span className="truncate">{h.project}</span>
+      {h.gitBranch ? (
+        <Badge className="shrink-0" variant="secondary">
+          {h.gitBranch}
+        </Badge>
+      ) : null}
+    </div>
+    <div className="flex items-center justify-between gap-2 text-muted-foreground text-xs">
+      <span className="truncate font-mono">
+        {h.model ?? h.id.slice(0, ID_PREFIX)}
+      </span>
+      <span className="shrink-0 whitespace-nowrap tabular-nums">
+        {fmtStarted(h.startedAt)} · {fmtBytes(h.sizeBytes)}
+      </span>
+    </div>
+  </button>
+);
+
+/** The filter controls + a compact, scrollable session list; rows call `onOpen`. */
 export const SessionList = ({
   headers,
+  selectedId,
   onOpen,
 }: {
   readonly headers: readonly SessionHeader[];
+  readonly selectedId: string | null;
   readonly onOpen: (id: string) => void;
 }) => {
   const [query, setQuery] = useState("");
@@ -142,15 +191,15 @@ export const SessionList = ({
   );
 
   return (
-    <div className="flex flex-col gap-4" data-testid="session-list">
-      <div className="flex flex-wrap items-center gap-3">
-        <Input
-          className="max-w-xs"
-          data-testid="session-search"
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by title…"
-          value={query}
-        />
+    <div className="flex flex-col gap-3" data-testid="session-list">
+      <Input
+        className="w-full"
+        data-testid="session-search"
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search by title…"
+        value={query}
+      />
+      <div className="grid grid-cols-2 gap-2">
         <FilterSelect
           label="Project"
           onChange={setProject}
@@ -181,70 +230,27 @@ export const SessionList = ({
         />
       </div>
 
-      <div className="rounded-lg border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Title</TableHead>
-              <TableHead>Project</TableHead>
-              <TableHead>Branch</TableHead>
-              <TableHead>Model</TableHead>
-              <TableHead className="text-right">Msgs</TableHead>
-              <TableHead className="text-right">Size</TableHead>
-              <TableHead>Started</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.map((h) => (
-              <TableRow
-                className="cursor-pointer"
-                data-testid="session-row"
-                key={h.id}
-                onClick={() => onOpen(h.id)}
-              >
-                <TableCell className="max-w-xs">
-                  <div className="truncate font-medium text-sm">
-                    {h.title ?? "Untitled session"}
-                  </div>
-                  <div className="truncate font-mono text-muted-foreground text-xs">
-                    {h.id.slice(0, ID_PREFIX)}
-                  </div>
-                </TableCell>
-                <TableCell className="text-sm">{h.project}</TableCell>
-                <TableCell>
-                  {h.gitBranch ? (
-                    <Badge variant="secondary">{h.gitBranch}</Badge>
-                  ) : (
-                    <span className="text-muted-foreground">—</span>
-                  )}
-                </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {h.model ?? "—"}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {h.messageCount}
-                </TableCell>
-                <TableCell className="text-right tabular-nums">
-                  {fmtBytes(h.sizeBytes)}
-                </TableCell>
-                <TableCell className="whitespace-nowrap text-muted-foreground text-xs">
-                  {h.startedAt?.slice(0, TS_MINUTE).replace("T", " ") ?? "—"}
-                </TableCell>
-              </TableRow>
-            ))}
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  className="py-8 text-center text-muted-foreground text-sm"
-                  colSpan={7}
-                  data-testid="session-no-matches"
-                >
-                  No sessions match the current filters.
-                </TableCell>
-              </TableRow>
-            ) : null}
-          </TableBody>
-        </Table>
+      <div className="px-1 text-muted-foreground text-xs">
+        {rows.length} {rows.length === 1 ? "session" : "sessions"}
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {rows.map((h) => (
+          <SessionRow
+            active={h.id === selectedId}
+            h={h}
+            key={h.id}
+            onOpen={onOpen}
+          />
+        ))}
+        {rows.length === 0 ? (
+          <p
+            className="py-8 text-center text-muted-foreground text-sm"
+            data-testid="session-no-matches"
+          >
+            No sessions match the current filters.
+          </p>
+        ) : null}
       </div>
     </div>
   );

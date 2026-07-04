@@ -20,13 +20,13 @@ interface NavItem {
 
 /** The three sections, in display order. */
 const NAV_ITEMS: readonly NavItem[] = [
-  { id: "memory", label: "Memory", icon: DatabaseIcon, hint: "All projects" },
   {
     id: "sessions",
     label: "Sessions",
     icon: MessagesSquareIcon,
     hint: "Context debug",
   },
+  { id: "memory", label: "Memory", icon: DatabaseIcon, hint: "All projects" },
   {
     id: "capabilities",
     label: "Capabilities",
@@ -93,7 +93,14 @@ export const AppShell = ({ children }: { readonly children: ReactNode }) => {
         </div>
       </aside>
       <main className="flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-6xl px-6 py-6">{children}</div>
+        <div
+          className={cn(
+            "mx-auto px-6 py-6",
+            route === "sessions" ? "max-w-[1800px]" : "max-w-6xl"
+          )}
+        >
+          {children}
+        </div>
       </main>
     </div>
   );
