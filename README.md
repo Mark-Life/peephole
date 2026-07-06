@@ -24,6 +24,11 @@ Effect-RPC contract on `127.0.0.1`, and opens the browser. Three sections:
    planned / unsupported. Only **Claude** is built today; the others are columns
    that show the gap.
 
+### Prerequisites
+
+- **[Bun](https://bun.com/docs/installation)** — the runtime and package manager.
+- **Node.js** `>=20.9.0` — required by some tooling in the workspace.
+
 ### Quickstart
 
 ```sh
