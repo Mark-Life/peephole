@@ -49,6 +49,38 @@ const buildStub = (args: {
   };
 };
 
+/** A transcript whose filename starts with the requested short id. */
+interface PrefixMatch {
+  readonly projectDir: string;
+  readonly sessionId: string;
+}
+
+/** Scan every project dir for transcripts whose id starts with `prefix`. */
+const findByPrefix = (args: {
+  readonly fs: FileSystem.FileSystem;
+  readonly projectsRoot: string;
+  readonly slugs: readonly string[];
+  readonly prefix: string;
+}): Effect.Effect<PrefixMatch[]> => {
+  const { fs, projectsRoot, slugs, prefix } = args;
+  return Effect.gen(function* () {
+    const matches: PrefixMatch[] = [];
+    for (const slug of slugs) {
+      const projectDir = join(projectsRoot, slug);
+      const names = yield* fs
+        .readDirectory(projectDir)
+        .pipe(Effect.orElseSucceed(() => [] as string[]));
+      for (const name of names) {
+        const sessionId = name.replace(JSONL_EXT, "");
+        if (JSONL_EXT.test(name) && sessionId.startsWith(prefix)) {
+          matches.push({ sessionId, projectDir });
+        }
+      }
+    }
+    return matches;
+  });
+};
+
 /** Resolve a Claude session id (or direct .jsonl path) to its transcript. */
 export const resolveClaudeSession = (args: {
   readonly fs: FileSystem.FileSystem;
@@ -107,6 +139,20 @@ export const resolveClaudeSession = (args: {
         return yield* withSubagentDir(id, projectDir);
       }
     }
+
+    // Fallback: treat `id` as a short prefix (as printed by `sessions ls`) and
+    // resolve it when it uniquely identifies one transcript across all projects.
+    const prefixMatches = yield* findByPrefix({
+      fs,
+      projectsRoot,
+      slugs,
+      prefix: id,
+    });
+    const [match] = prefixMatches;
+    if (prefixMatches.length === 1 && match) {
+      return yield* withSubagentDir(match.sessionId, match.projectDir);
+    }
+
     return yield* Effect.fail(
       new SessionNotFoundError({ id, searchedRoot: projectsRoot })
     );
