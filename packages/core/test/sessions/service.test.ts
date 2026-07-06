@@ -134,6 +134,15 @@ describe("SessionsService.analyze", () => {
       })
     ));
 
+  test("resolves a short id prefix to the full session", () =>
+    run(
+      Effect.gen(function* () {
+        const svc = yield* SessionsService;
+        const a = yield* svc.analyze({ id: SESSION_ID.slice(0, 8) });
+        expect(a.sessionId).toBe(SESSION_ID);
+      })
+    ));
+
   test("missing session fails with SessionNotFoundError", () =>
     run(
       Effect.gen(function* () {
