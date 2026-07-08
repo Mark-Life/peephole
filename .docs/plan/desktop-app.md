@@ -193,14 +193,16 @@ Until then: unsigned artifacts (right-click-open on mac; SmartScreen warning on 
 
 # PHASE G — Auto-update (electron-updater + GitHub Releases)
 
+**STATUS: DONE** — implemented across `src/shared/update.ts` (discriminated-union state + IPC channels), `src/main/updater-state.ts` (+ test), `src/main/index.ts` `setupAutoUpdater`, `electron-builder` publish block, and the `electron-updater` dependency. Checks pass: typechecks, testsPass, electronViteBuild, builderConfigLoads, publishBlockPresent (no failures).
+
 **Files:** `apps/desktop/src/shared/update.ts`, `apps/desktop/src/main/updater-state.ts`, updater wiring in `src/main/index.ts`.
 
-1. Copy executor `src/shared/update.ts` (discriminated-union state + IPC channels) and `src/main/updater-state.ts` (pure, unit-tested decision helpers).
-2. `setupAutoUpdater()` (from executor `index.ts`): **packaged-only**, `electron-updater`, `provider: "github", owner: "Mark-Life", repo: "peephole"`, ~4h poll, "Restart to update" dialog → `quitAndInstall`.
-3. `electron-builder.config.ts`: `publish: { provider: "github", owner: "Mark-Life", repo: "peephole" }` → emits `latest*.yml` manifests.
-4. MVP UI: native dialog only (skip in-renderer update card unless a renderer bundle exists).
+1. Copy executor `src/shared/update.ts` (discriminated-union state + IPC channels) and `src/main/updater-state.ts` (pure, unit-tested decision helpers). — done
+2. `setupAutoUpdater()` (from executor `index.ts`): **packaged-only**, `electron-updater`, `provider: "github", owner: "Mark-Life", repo: "peephole"`, ~4h poll, "Restart to update" dialog → `quitAndInstall`. — done
+3. `electron-builder.config.ts`: `publish: { provider: "github", owner: "Mark-Life", repo: "peephole" }` → emits `latest*.yml` manifests. — done
+4. MVP UI: native dialog only (skip in-renderer update card unless a renderer bundle exists). — done
 
-**Caveat:** unsigned auto-update works but mac Gatekeeper re-warns per update until Phase F.
+**Caveat:** unsigned auto-update works but mac Gatekeeper re-warns per update until Phase F. End-to-end update flow can only be verified against a real GitHub Release (manual — not covered by automated checks).
 
 ---
 

@@ -64,13 +64,15 @@ const config: Configuration = {
     category: "Development",
   },
 
-  // Publishing is wired up later. electron-builder only publishes when
-  // `--publish` is passed, so enabling this block is deferred:
-  // publish: {
-  //   provider: "github",
-  //   owner: "Mark-Life",
-  //   repo: "peephole",
-  // },
+  // GitHub Releases feed for electron-updater. This emits the `latest*.yml`
+  // update manifests alongside the artifacts. electron-builder only uploads when
+  // `--publish` is passed (CI provides GITHUB_TOKEN); a plain package run just
+  // writes the yml locally.
+  publish: {
+    provider: "github",
+    owner: "Mark-Life",
+    repo: "peephole",
+  },
 };
 
 export default config;

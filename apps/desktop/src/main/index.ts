@@ -12,8 +12,10 @@ import {
   shell,
 } from "electron";
 import log from "electron-log/main.js";
+import updater from "electron-updater";
 import windowStateKeeper from "electron-window-state";
 import type { DesktopServerSettings } from "../shared/server-settings";
+import type { DesktopUpdateStatus } from "../shared/update";
 import { sidecarCrashHtml, startupWindowHtml } from "./crash-screen";
 import { getServerSettings, updateServerSettings } from "./settings";
 import {
@@ -23,6 +25,23 @@ import {
   startSidecar,
   stopSidecar,
 } from "./sidecar";
+import {
+  planCompletedUpdateCheck,
+  planDownloadedUpdate,
+  planUpdateCheck,
+  statusAfterUpdateError,
+  type UpdateCheckTrigger,
+} from "./updater-state";
+
+// electron-updater is CommonJS with a default export; the named ESM import fails
+// under this package's "type":"module" build, so destructure off the default.
+const { autoUpdater } = updater;
+interface UpdateInfo {
+  readonly version: string;
+}
+interface ProgressInfo {
+  readonly percent: number;
+}
 
 // Pin userData to an app-name-scoped dir BEFORE app.ready so every Electron-side
 // consumer (electron-store, electron-log, window-state) lands at a predictable
@@ -311,6 +330,14 @@ const installApplicationMenu = () => {
     submenu: [
       { role: "about" },
       {
+        label: "Check for Updates…",
+        click: () => {
+          runUpdateCheck({ alertOnFail: true, trigger: "manual" }).catch(
+            (error) => log.error("Update check failed", error)
+          );
+        },
+      },
+      {
         label: "Documentation",
         click: () => {
           shell
@@ -379,6 +406,195 @@ const installApplicationMenu = () => {
   );
 };
 
+// ──────────────────────────────────────────────────────────────────────
+// Auto-updates — native-dialog flow over electron-updater + GitHub Releases.
+//
+// electron-updater's default swaps the app silently on quit, so users get no
+// signal an update is ready. We replace that with:
+//   - autoDownload: true          — pull the next version in the background
+//   - autoInstallOnAppQuit: false — never swap silently
+//   - on 'update-downloaded'      → native "Restart now / Later" dialog
+//   - "Check for Updates…" menu   — runs the same flow manually
+//
+// Declining a version is remembered and NOT re-prompted until a strictly-newer
+// one arrives (the pure helpers in ./updater-state drive that decision). The
+// whole path is a packaged-only no-op: dev has no real feed to swap against.
+// ──────────────────────────────────────────────────────────────────────
+
+let downloadedUpdateVersion: string | null = null;
+let declinedUpdateVersion: string | null = null;
+let updateDialogOpen = false;
+let pendingUpdateVersion: string | null = null;
+// Fed to statusAfterUpdateError only — the MVP has no renderer to push it to.
+let updateStatus: DesktopUpdateStatus = { state: "idle" };
+
+// Re-check periodically so a long-idle session picks up releases without a
+// quit + relaunch. The boot-time check still runs; this is a self-heal.
+const UPDATE_POLL_INTERVAL_MS = 14_400_000; // 4 hours
+
+/** Show the "Restart now / Later" dialog, driving quitAndInstall on accept. */
+const promptInstallUpdate = async (version: string) => {
+  if (updateDialogOpen) {
+    return;
+  }
+  updateDialogOpen = true;
+  try {
+    const response = await dialog.showMessageBox({
+      type: "info",
+      title: "Update ready",
+      message: `Peephole ${version} is ready to install.`,
+      detail:
+        "Restart now to apply the update, or keep working — we'll prompt again later.",
+      buttons: ["Restart now", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+    });
+    if (response.response === 0) {
+      // Stop the sidecar cleanly before Squirrel swaps the bundle, so no
+      // orphaned peephole process holds a lock on the binary during the swap.
+      if (connection) {
+        await stopSidecar(connection.child);
+        connection = null;
+      }
+      autoUpdater.quitAndInstall(false, true);
+      return;
+    }
+    declinedUpdateVersion = version;
+  } finally {
+    updateDialogOpen = false;
+  }
+};
+
+interface UpdateCheckOptions {
+  readonly alertOnFail: boolean;
+  readonly trigger: UpdateCheckTrigger;
+}
+
+interface UpdateCheckResult {
+  readonly isUpdateAvailable?: boolean;
+  readonly updateInfo?: { readonly version?: string };
+}
+
+/** Run a check, surfacing outcomes only when `alertOnFail` (manual invocation). */
+const runUpdateCheck = async ({ alertOnFail, trigger }: UpdateCheckOptions) => {
+  if (!app.isPackaged) {
+    if (alertOnFail) {
+      await dialog.showMessageBox({
+        type: "info",
+        title: "Updates unavailable",
+        message: "Auto-update is only enabled in packaged builds.",
+      });
+    }
+    return;
+  }
+  const checkPlan = planUpdateCheck({
+    stagedVersion: downloadedUpdateVersion,
+    trigger,
+  });
+  if (!checkPlan.check) {
+    return;
+  }
+  try {
+    const result =
+      (await autoUpdater.checkForUpdates()) as UpdateCheckResult | null;
+    const newer = result?.isUpdateAvailable === true;
+    const promptAfterCheck = planCompletedUpdateCheck({
+      stagedVersion: checkPlan.promptVersionAfterCheck,
+      trigger,
+      updateAvailable: newer,
+      availableVersion:
+        typeof result?.updateInfo?.version === "string"
+          ? result.updateInfo.version
+          : null,
+    }).promptVersion;
+    if (promptAfterCheck) {
+      await promptInstallUpdate(promptAfterCheck);
+      return;
+    }
+    if (!alertOnFail) {
+      return;
+    }
+    if (newer) {
+      // The 'update-downloaded' handler fires the install dialog.
+      return;
+    }
+    await dialog.showMessageBox({
+      type: "info",
+      title: "No updates",
+      message: `You're on the latest version (${app.getVersion()}).`,
+    });
+  } catch (error) {
+    log.warn("[updater] check failed", error);
+    updateStatus = statusAfterUpdateError(
+      updateStatus,
+      "Update failed. Check again from the menu."
+    );
+    if (!alertOnFail) {
+      return;
+    }
+    await dialog.showMessageBox({
+      type: "error",
+      title: "Update check failed",
+      message: "Couldn't reach the update server.",
+      detail: "Check your network and try again from the menu.",
+    });
+  }
+};
+
+/** Wire electron-updater listeners + poll interval. Packaged builds only. */
+const setupAutoUpdater = () => {
+  if (!app.isPackaged) {
+    return;
+  }
+  autoUpdater.logger = log;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on("update-available", (info: UpdateInfo) => {
+    pendingUpdateVersion = info.version;
+    updateStatus = { state: "available", version: info.version };
+  });
+  autoUpdater.on("download-progress", (progress: ProgressInfo) => {
+    if (pendingUpdateVersion) {
+      updateStatus = {
+        state: "downloading",
+        version: pendingUpdateVersion,
+        percent: Math.round(progress.percent ?? 0),
+      };
+    }
+  });
+  autoUpdater.on("update-downloaded", (info: UpdateInfo) => {
+    const decision = planDownloadedUpdate({
+      stagedVersion: downloadedUpdateVersion,
+      declinedVersion: declinedUpdateVersion,
+      incomingVersion: info.version,
+      trigger: "boot",
+    });
+    downloadedUpdateVersion = decision.stagedVersion;
+    declinedUpdateVersion = decision.declinedVersion;
+    updateStatus = decision.status;
+    if (decision.promptVersion) {
+      promptInstallUpdate(decision.promptVersion).catch((error) =>
+        log.error("Update prompt failed", error)
+      );
+    }
+  });
+  autoUpdater.on("error", (err: Error) => {
+    log.warn("[updater] error", err);
+    updateStatus = statusAfterUpdateError(
+      updateStatus,
+      "Update failed. Check again from the menu."
+    );
+    pendingUpdateVersion = null;
+  });
+
+  setInterval(() => {
+    runUpdateCheck({ alertOnFail: false, trigger: "interval" }).catch((error) =>
+      log.error("Update check failed", error)
+    );
+  }, UPDATE_POLL_INTERVAL_MS);
+};
+
 /** Surface a fatal startup failure in a dialog before quitting. */
 const showFatalSidecarDialog = async (error: unknown) => {
   showCrashScreen();
@@ -396,6 +612,12 @@ const showFatalSidecarDialog = async (error: unknown) => {
 const boot = async () => {
   installDockIcon();
   installApplicationMenu();
+  setupAutoUpdater();
+  // autoDownload drives the background pull; an explicit boot check kicks it off
+  // immediately rather than waiting for the first poll interval.
+  runUpdateCheck({ alertOnFail: false, trigger: "boot" }).catch((error) =>
+    log.error("Update check failed", error)
+  );
   await showStartupWindow();
   registerIpcHandlers();
   // A sidecar dying under a live window leaves the web UI failing every request

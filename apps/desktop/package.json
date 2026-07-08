@@ -16,6 +16,9 @@
     "package:linux": "electron-builder --linux --config electron-builder.config.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "electron-updater": "^6"
+  },
   "devDependencies": {
     "@workspace/typescript-config": "workspace:*",
     "@types/node": "^24.9.2",
