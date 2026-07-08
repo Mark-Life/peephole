@@ -28,6 +28,7 @@ import { BunHttpServer } from "@effect/platform-bun";
 import { RpcSerialization, RpcServer } from "@effect/rpc";
 import { makeHandlersLayer, PeepholeRpcs } from "@workspace/rpc";
 import { Console, Effect, Layer } from "effect";
+import embeddedUI from "../embedded-ui.gen";
 
 const HOST = "127.0.0.1";
 const DEFAULT_PORT = 4321;
@@ -99,47 +100,103 @@ const openBrowser = (url: string): Effect.Effect<void> =>
     }
   }).pipe(Effect.ignore);
 
+/** Request pathname without the query string or leading slashes. */
+const requestPathname = (url: string) =>
+  decodeURIComponent((url.split("?")[0] ?? "/").replace(LEADING_SLASHES, ""));
+
 /**
- * Static-asset handler: serve `dist/<path>` when it resolves to a real file
- * inside the dist root, else fall back to `index.html` (SPA client routing).
+ * Filesystem static-asset handler: serve `<clientDir>/<path>` when it resolves
+ * to a real file inside the root, else fall back to `index.html` (SPA client
+ * routing), else a 503 when the UI was never built.
  */
-const staticHandler = Effect.gen(function* () {
-  const req = yield* HttpServerRequest.HttpServerRequest;
-  const fs = yield* FileSystem.FileSystem;
-  const pathname = decodeURIComponent(
-    (req.url.split("?")[0] ?? "/").replace(LEADING_SLASHES, "")
-  );
-  const candidate = resolve(DIST_DIR, pathname);
-  const indexHtml = join(DIST_DIR, "index.html");
-  const inRoot = candidate === DIST_DIR || candidate.startsWith(`${DIST_DIR}/`);
-  if (inRoot && pathname !== "") {
-    const isFile = yield* fs.stat(candidate).pipe(
-      Effect.map((info) => info.type === "File"),
-      Effect.orElseSucceed(() => false)
-    );
-    if (isFile) {
-      return yield* HttpServerResponse.file(candidate);
+const fileSystemStaticHandler = (clientDir: string) =>
+  Effect.gen(function* () {
+    const req = yield* HttpServerRequest.HttpServerRequest;
+    const fs = yield* FileSystem.FileSystem;
+    const pathname = requestPathname(req.url);
+    const candidate = resolve(clientDir, pathname);
+    const indexHtml = join(clientDir, "index.html");
+    const inRoot =
+      candidate === clientDir || candidate.startsWith(`${clientDir}/`);
+    if (inRoot && pathname !== "") {
+      const isFile = yield* fs.stat(candidate).pipe(
+        Effect.map((info) => info.type === "File"),
+        Effect.orElseSucceed(() => false)
+      );
+      if (isFile) {
+        return yield* HttpServerResponse.file(candidate);
+      }
     }
-  }
-  return yield* HttpServerResponse.file(indexHtml).pipe(
-    Effect.orElse(() =>
-      Effect.succeed(
-        HttpServerResponse.text(
-          "Inspector assets not built. Run: cd apps/inspector && bun run build",
-          { status: NOT_BUILT_STATUS }
+    return yield* HttpServerResponse.file(indexHtml).pipe(
+      Effect.orElse(() =>
+        Effect.succeed(
+          HttpServerResponse.text(
+            "Inspector assets not built. Run: cd apps/inspector && bun run build",
+            { status: NOT_BUILT_STATUS }
+          )
         )
       )
-    )
-  );
-});
+    );
+  });
+
+/** Build a response for one embedded (bunfs) asset, with SPA-friendly caching. */
+const embeddedFileResponse = (bunfsPath: string, isIndex: boolean) => {
+  const file = Bun.file(bunfsPath);
+  const headers: Record<string, string> = {
+    "content-type": file.type || "application/octet-stream",
+  };
+  if (isIndex) {
+    headers["cache-control"] = "no-store";
+  }
+  return HttpServerResponse.raw(new Response(file, { headers }));
+};
+
+/**
+ * Embedded static-asset handler (compiled binary): resolve the request path in
+ * the baked-in manifest, falling back to the embedded `index.html` for
+ * client-side routes.
+ */
+const embeddedStaticHandler = (manifest: Record<string, string>) =>
+  Effect.gen(function* () {
+    const req = yield* HttpServerRequest.HttpServerRequest;
+    const pathname = requestPathname(req.url);
+    const key = pathname === "" ? "/index.html" : `/${pathname}`;
+    const indexPath = manifest["/index.html"];
+    const target = manifest[key] ?? indexPath;
+    if (target === undefined) {
+      return HttpServerResponse.text("Inspector assets not embedded.", {
+        status: NOT_BUILT_STATUS,
+      });
+    }
+    return embeddedFileResponse(target, target === indexPath);
+  });
+
+/** Resolve the static handler + a human-readable UI source label.
+ *
+ * Order: `PEEPHOLE_CLIENT_DIR` dev override, then the embedded manifest baked
+ * into a compiled binary, then the on-disk inspector `dist/` (source runs).
+ */
+const resolveStaticHandler = () => {
+  const override = process.env.PEEPHOLE_CLIENT_DIR;
+  if (override) {
+    const dir = resolve(override);
+    return { handler: fileSystemStaticHandler(dir), source: dir };
+  }
+  if (embeddedUI) {
+    return { handler: embeddedStaticHandler(embeddedUI), source: "embedded" };
+  }
+  return { handler: fileSystemStaticHandler(DIST_DIR), source: DIST_DIR };
+};
 
 /** The scoped serve program: build the router, start serving, keep alive. */
 const serveProgram = (args: { readonly open: boolean }) =>
   Effect.gen(function* () {
     const server = yield* HttpServer.HttpServer;
     const rpcApp = yield* RpcServer.toHttpApp(PeepholeRpcs);
+    const { handler: staticHandler, source: uiSource } = resolveStaticHandler();
     const router = HttpRouter.empty.pipe(
       HttpRouter.mountApp("/rpc", rpcApp),
+      HttpRouter.get("/health", Effect.succeed(HttpServerResponse.text("ok"))),
       HttpRouter.get("/", staticHandler),
       HttpRouter.get("/*", staticHandler)
     );
@@ -151,10 +208,15 @@ const serveProgram = (args: { readonly open: boolean }) =>
     const url = `http://${HOST}:${port}`;
     yield* Console.log(`Peephole serving on ${url}`);
     yield* Console.log(`  RPC:    ${url}/rpc`);
-    yield* Console.log(`  UI:     ${url}/  (from ${DIST_DIR})`);
+    yield* Console.log(`  UI:     ${url}/  (from ${uiSource})`);
     yield* Console.log(
       "  Watch:  on (filesystem-driven refresh via watch.poll)"
     );
+
+    // Machine-readable readiness line for a supervising desktop shell.
+    if (process.env.PEEPHOLE_CLIENT === "desktop") {
+      yield* Console.log(`PEEPHOLE_READY:${port}`);
+    }
 
     // WatchService is provisioned as part of `makeHandlersLayer` (see
     // packages/rpc): a scoped fiber watches the agent roots for the lifetime of
