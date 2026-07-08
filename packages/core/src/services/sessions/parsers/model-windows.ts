@@ -8,21 +8,28 @@
  * heuristic — not authoritative context like Codex's `model_context_window`.
  */
 
+const K128 = 128_000;
+const K131 = 131_072;
+const K200 = 200_000;
+const K250 = 250_000;
+const K258 = 258_400;
+const M1 = 1_000_000;
+
 /** Ordered [needle, window] pairs; first case-insensitive substring hit wins. */
 const WINDOWS: ReadonlyArray<readonly [string, number]> = [
-  ["claude-opus", 200_000],
-  ["claude-sonnet", 1_000_000],
-  ["claude-haiku", 200_000],
-  ["claude", 200_000],
-  ["gpt-5", 258_400],
-  ["gpt-oss", 131_072],
-  ["glm-5", 250_000],
-  ["glm", 128_000],
-  ["qwen3", 131_072],
-  ["qwen", 131_072],
-  ["gemma", 128_000],
-  ["gemini", 1_000_000],
-  ["llama", 128_000],
+  ["claude-opus", K200],
+  ["claude-sonnet", M1],
+  ["claude-haiku", K200],
+  ["claude", K200],
+  ["gpt-5", K258],
+  ["gpt-oss", K131],
+  ["glm-5", K250],
+  ["glm", K128],
+  ["qwen3", K131],
+  ["qwen", K131],
+  ["gemma", K128],
+  ["gemini", M1],
+  ["llama", K128],
 ];
 
 /** Look up a model's context window by id substring, or `undefined`. */
