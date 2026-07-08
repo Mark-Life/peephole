@@ -63,8 +63,8 @@ function detectPackageManager() {
     return "bun";
   }
   if (
-    import.meta.dirname.includes(".bun/install/global") ||
-    import.meta.dirname.includes(".bun\\install\\global")
+    __dirname.includes(".bun/install/global") ||
+    __dirname.includes(".bun\\install\\global")
   ) {
     return "bun";
   }
