@@ -87,6 +87,9 @@ Single artifact, two roles: the compiled `peephole` binary is BOTH the npm CLI a
 
 # PHASE B — Electron shell (MVP desktop app)
 
+**STATUS: PARTIAL** — `apps/desktop` (`@workspace/desktop`) implemented and `electron-vite build` passes (typechecks + installs clean). Main process has single-instance lock, `electron-window-state`, `electron-store` settings, `electron-log`, startup + sidecar-crash `data:` HTML screens, `loadURL(http://127.0.0.1:<port>/)`, `setWindowOpenHandler`→`shell.openExternal`, and an application menu. Sidecar module spawns the server on a free loopback port, parses `PEEPHOLE_READY:<port>`, probes `/health`, and does SIGTERM→(5s)→SIGKILL on quit with an expected-exit set; dev path is `bun run apps/cli/src/index.ts serve --port <p> --no-open` with `PEEPHOLE_CLIENT=desktop`. Files: `apps/desktop/src/main/index.ts`, `apps/desktop/src/main/sidecar.ts`, `apps/desktop/src/main/settings.ts`, `apps/desktop/src/main/crash-screen.ts`, `apps/desktop/src/preload/index.ts`, `apps/desktop/src/preload/global.d.ts`, `apps/desktop/src/shared/server-settings.ts`, `apps/desktop/electron.vite.config.ts`, `apps/desktop/package.json`, `apps/desktop/tsconfig.json`.
+**Human-only verification still pending:** launch confirms the window renders the inspector UI (`bun run --filter=@workspace/desktop dev`); quitting the app kills the sidecar with no orphan `peephole`/`bun` process. Not yet run.
+
 **Goal:** `apps/desktop` launches, spawns the dev sidecar, shows the inspector in a native window. Unpackaged (`electron-vite dev`) is enough for MVP.
 
 **New package `apps/desktop`** (`@workspace/desktop`, `"type":"module"`, `"main":"./out/main/index.js"`). Copy-adapt from executor, **trimmed**:
@@ -100,44 +103,50 @@ Single artifact, two roles: the compiled `peephole` binary is BOTH the npm CLI a
 | `electron.vite.config.ts` | same | main + preload targets | renderer target (use inline `data:` screens; no renderer bundle for MVP) |
 
 **Steps:**
-1. Shell picks a free port (Node `net` server → `:0` → read port, close) and passes `--port` → no scan race.
-2. Dev sidecar cmd: `bun run apps/cli/src/index.ts serve --port <p> --no-open` with env `PEEPHOLE_CLIENT=desktop`. (Ensure `serve` has a `--no-open`/`--client` flag; add if missing.)
-3. `predev`: `bun run --filter=inspector build` so the dev sidecar finds `dist`.
-4. Deps: `electron`, `electron-vite`, `electron-log`, `electron-store`, `electron-window-state` (dev); add `electron-updater` in Phase G.
+1. Shell picks a free port (Node `net` server → `:0` → read port, close) and passes `--port` → no scan race. — done
+2. Dev sidecar cmd: `bun run apps/cli/src/index.ts serve --port <p> --no-open` with env `PEEPHOLE_CLIENT=desktop`. (Ensure `serve` has a `--no-open`/`--client` flag; add if missing.) — done (`--no-open` flag present in `serve.ts`)
+3. `predev`: `bun run --filter=inspector build` so the dev sidecar finds `dist`. — done
+4. Deps: `electron`, `electron-vite`, `electron-log`, `electron-store`, `electron-window-state` (dev); add `electron-updater` in Phase G. — done
 
-**Acceptance:** `bun run --filter=@workspace/desktop dev` opens a window rendering the inspector; closing the app kills the sidecar (no orphan `peephole`/`bun` process — check `ps`).
+**Acceptance:** `bun run --filter=@workspace/desktop dev` opens a window rendering the inspector; closing the app kills the sidecar (no orphan `peephole`/`bun` process — check `ps`). — TODO: human-only runtime verification (window renders inspector; no orphan procs on quit) not yet run.
 
 ---
 
 # PHASE C — Packaging (electron-builder)
+
+**STATUS: PARTIAL** — C.1 implemented; the `electron-builder.config.ts` loads cleanly and the host sidecar is staged (`apps/desktop/resources/peephole/peephole`, chmod 0o755). `build-sidecar.ts` runs the CLI's own `src/build.ts` (host target, or `BUN_TARGET` cross target) and copies the compiled binary into `resources/peephole/`. Config sets `appId: com.mark-life.peephole`, `productName: Peephole`, `artifactName: peephole-desktop-${os}-${arch}.${ext}`, `directories.output: dist-app`, `extraResources` for `resources/peephole/`, and `mac: { target: ["dmg","zip"], hardenedRuntime: true, entitlements: build/entitlements.mac.plist, notarize: false }` (unsigned). Main resolves the packaged sidecar at `process.resourcesPath/peephole/peephole`. Files: `apps/desktop/electron-builder.config.ts`, `apps/desktop/scripts/build-sidecar.ts`, `apps/desktop/build/entitlements.mac.plist`, `apps/desktop/build/icon.png`.
+C.2 (win/linux) targets are present in the config (`win: nsis`, `linux: AppImage/deb/rpm`) but no non-mac artifact has been cross-built or verified.
+**Human-only verification still pending:** `bun run --filter=@workspace/desktop package:mac` produces an installable `.dmg`; the installed app launches, boots the sidecar, and renders the inspector; the unsigned build passes Gatekeeper via right-click → Open on a clean macOS machine. Not yet run.
 
 **Goal:** installable artifacts.
 
 **Files:** `apps/desktop/electron-builder.config.ts`, `apps/desktop/scripts/build-sidecar.ts`, `apps/desktop/build/{icon.png,entitlements.mac.plist}`.
 
 **C.1 — mac first**
-1. `build-sidecar.ts` (from executor): run `apps/cli` `build.ts` for host target → copy `apps/cli/dist/<target>/peephole` → `apps/desktop/resources/peephole/` + `chmod 0o755`.
+1. `build-sidecar.ts` (from executor): run `apps/cli` `build.ts` for host target → copy `apps/cli/dist/<target>/peephole` → `apps/desktop/resources/peephole/` + `chmod 0o755`. — done
 2. `electron-builder.config.ts`:
    - `appId: "com.mark-life.peephole"`, `productName: "Peephole"`
    - `artifactName: "peephole-desktop-${os}-${arch}.${ext}"`
    - `extraResources: [{ from: "resources/peephole/", to: "peephole/" }]` (outside asar)
    - `mac: { target: ["dmg","zip"], hardenedRuntime: true, entitlements: "build/entitlements.mac.plist", notarize: false }` (unsigned for now)
-   - `directories.output: "dist-app"`
-3. `build/entitlements.mac.plist` ← copy executor's 4 (JIT, unsigned-executable-memory, dyld-env-vars, disable-library-validation) — required because the embedded Bun binary loads dylibs outside Electron's signing chain.
-4. Main resolves packaged sidecar at `process.resourcesPath/peephole/peephole` (dev: `bun run …`).
-5. `build/icon.png` — 1024×1024 RGBA peephole icon (placeholder ok initially).
+   - `directories.output: "dist-app"` — done (config loads)
+3. `build/entitlements.mac.plist` ← copy executor's 4 (JIT, unsigned-executable-memory, dyld-env-vars, disable-library-validation) — required because the embedded Bun binary loads dylibs outside Electron's signing chain. — done
+4. Main resolves packaged sidecar at `process.resourcesPath/peephole/peephole` (dev: `bun run …`). — done
+5. `build/icon.png` — 1024×1024 RGBA peephole icon (placeholder ok initially). — done (placeholder committed)
 
-**Acceptance:** `bun run --filter=@workspace/desktop package:mac` → `.dmg` in `dist-app/`; installed app launches, sidecar boots, inspector renders. (Unsigned → Gatekeeper right-click-open on first launch.)
+**Acceptance:** `bun run --filter=@workspace/desktop package:mac` → `.dmg` in `dist-app/`; installed app launches, sidecar boots, inspector renders. (Unsigned → Gatekeeper right-click-open on first launch.) — TODO: human-only verification (dmg builds + installs; app launches + renders; Gatekeeper right-click-open) not yet run.
 
-**C.2 — broaden arch** (after mac works): add `win: { target:["nsis"] }`, `linux: { target:["AppImage","deb","rpm"] }`. Do NOT pin arch in config — arch is driven per-CI-leg (Phase H).
+**C.2 — broaden arch** (after mac works): add `win: { target:["nsis"] }`, `linux: { target:["AppImage","deb","rpm"] }`. Do NOT pin arch in config — arch is driven per-CI-leg (Phase H). — done (targets present in config) — TODO: no win/linux artifact cross-built or verified yet.
 
 ---
 
 # PHASE D — Dev workflow + turbo
 
-- `apps/desktop/package.json` scripts: `dev` (`electron-vite dev`), `build` (`bun scripts/build-sidecar.ts && electron-vite build`), `package[:mac|:win|:linux]` (`electron-builder …`), `predev`/`prebuild` (inspector build).
-- Root `turbo.json`: `@workspace/desktop#build` depends on `inspector#build` + `peephole#build:binary`. Add root scripts `desktop:dev`, `desktop:package`.
-- Root `package.json`: keep existing `serve` (unchanged dev path); add desktop scripts.
+**STATUS: DONE** — all wiring in place and typechecks. `apps/desktop/package.json` has `dev`, `build` (`bun run scripts/build-sidecar.ts && electron-vite build`), `package`/`package:mac`/`package:win`/`package:linux`, `preview`, `predev`/`prebuild` (inspector build), `typecheck`. Root `turbo.json` has `@workspace/desktop#build` depending on `inspector#build` + `peephole#build:binary` (plus a `build:binary` task). Root `package.json` keeps `serve` unchanged and adds `desktop:dev` + `desktop:package`. Files: `apps/desktop/package.json`, `turbo.json`, `package.json`.
+
+- `apps/desktop/package.json` scripts: `dev` (`electron-vite dev`), `build` (`bun scripts/build-sidecar.ts && electron-vite build`), `package[:mac|:win|:linux]` (`electron-builder …`), `predev`/`prebuild` (inspector build). — done
+- Root `turbo.json`: `@workspace/desktop#build` depends on `inspector#build` + `peephole#build:binary`. Add root scripts `desktop:dev`, `desktop:package`. — done
+- Root `package.json`: keep existing `serve` (unchanged dev path); add desktop scripts. — done
 
 ---
 

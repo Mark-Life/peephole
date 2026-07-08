@@ -27,6 +27,16 @@ out/
 build
 dist
 
+# Desktop packaging artifacts
+apps/desktop/resources/
+apps/desktop/dist-app/
+apps/desktop/out/
+
+# Committed buildResources (icon + entitlements) — the bare `build` rule above
+# ignores every `build/` dir; keep this one tracked.
+!apps/desktop/build/
+!apps/desktop/build/**
+
 
 # Debug
 npm-debug.log*
