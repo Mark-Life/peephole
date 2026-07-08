@@ -4,6 +4,6 @@
     "strictNullChecks": true,
     "types": ["node", "electron", "bun"]
   },
-  "include": ["src", "electron.vite.config.ts"],
+  "include": ["src", "scripts", "electron.vite.config.ts"],
   "exclude": ["node_modules", "out"]
 }

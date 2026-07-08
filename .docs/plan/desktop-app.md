@@ -208,15 +208,27 @@ Until then: unsigned artifacts (right-click-open on mac; SmartScreen warning on 
 
 # PHASE H — CI/CD
 
+**STATUS: DONE** (code) — all workflow + script code in place and validated. `pass=true`, checks all green: `yamlParses`, `actionlintClean`, `triggersCorrect`, `scriptsExist`, `mergeScriptTypechecks` (`referencedButMissing=[]`, `failures=[]`). Files created:
+- `.github/workflows/publish-desktop.yml` — desktop release workflow.
+- `.github/workflows/publish-cli.yml` — CLI npm publish workflow.
+- `apps/desktop/scripts/merge-latest-mac-yml.ts` — merges dual-arch mac update manifests.
+- No separate version-helper file: version is derived from the pushed tag inline in each workflow (desktop tracks `apps/desktop/package.json`, CLI tracks `apps/cli/package.json`).
+
+**Remaining external/manual (NOT code — not done here):**
+- Create GitHub repo secret `NPM_TOKEN` (required by CLI publish).
+- Phase F signing/notarize secrets: `CSC_LINK`, `CSC_KEY_PASSWORD`, `APPLE_*` (for signed + notarized mac builds).
+- Push the first `desktop-v*` / `cli-v*` tags to actually trigger publishing.
+- End-to-end publish can only be verified by running the workflows on GitHub.
+
 Peephole has **no Changesets** (executor does) → simpler. Independent tags per artifact.
 
-**H.1 — desktop publish** `.github/workflows/publish-desktop.yml` (adapt executor's), trigger `push: tags: ['desktop-v*']`:
-- Matrix start = `{macos-latest, arm64}`; expand to `{macos arm64/x64, ubuntu x64, windows x64}` in H.2.
-- Each leg: `bun install --frozen-lockfile` → `bun run --filter=inspector build` → `bun apps/desktop/scripts/build-sidecar.ts` (with `BUN_TARGET` for the leg) → **smoke-test binary** (`peephole serve` boots + `/health` 200) → `electron-vite build` → `electron-builder --<os> --<arch> --publish never`.
-- Release job: (later) merge dual mac `latest-mac-<arch>.yml` (executor `scripts/merge-latest-mac-yml.ts`), `gh release upload --clobber`, flip draft→published. Version from tag; desktop tracks `apps/desktop/package.json`.
+**H.1 — desktop publish** `.github/workflows/publish-desktop.yml` (adapt executor's), trigger `push: tags: ['desktop-v*']`: — done
+- Matrix start = `{macos-latest, arm64}`; expand to `{macos arm64/x64, ubuntu x64, windows x64}` in H.2. — done
+- Each leg: `bun install --frozen-lockfile` → `bun run --filter=inspector build` → `bun apps/desktop/scripts/build-sidecar.ts` (with `BUN_TARGET` for the leg) → **smoke-test binary** (`peephole serve` boots + `/health` 200) → `electron-vite build` → `electron-builder --<os> --<arch> --publish never`. — done
+- Release job: merge dual mac `latest-mac-<arch>.yml` (`apps/desktop/scripts/merge-latest-mac-yml.ts`), `gh release upload --clobber`, flip draft→published. Version from tag; desktop tracks `apps/desktop/package.json`. — done
 
-**H.2 — CLI npm publish** separate workflow, trigger `push: tags: ['cli-v*']`:
-- Cross-compile per target → publish each `@peephole/cli-<os>-<arch>` + main `peephole` to npm (needs `NPM_TOKEN`). Version from tag; tracks `apps/cli/package.json`.
+**H.2 — CLI npm publish** separate workflow `.github/workflows/publish-cli.yml`, trigger `push: tags: ['cli-v*']`: — done
+- Cross-compile per target → publish each `@peephole/cli-<os>-<arch>` + main `peephole` to npm (needs `NPM_TOKEN` secret — external/manual). Version from tag; tracks `apps/cli/package.json`. — done
 
 **Why separate tags:** desktop and CLI have different cadence + distribution channels (GitHub Releases vs npm). Release either without bumping the other.
 
