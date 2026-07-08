@@ -152,6 +152,12 @@ C.2 (win/linux) targets are present in the config (`win: nsis`, `linux: AppImage
 
 # PHASE E — npm-distributable CLI (Ubuntu VPS use case)
 
+**STATUS: DONE** (local staging + generation; actual `npm publish` is external, deferred to CI/Phase H). Naming resolved **unscoped** — wrapper `peephole` + per-platform `peephole-cli-<platform>-<arch>` variants (no npm org needed). Generator `scripts/build-npm.ts` cross-compiles all four targets via `BUN_TARGET` (re-running Phase A's `src/build.ts`) and stages clean publishable dirs under gitignored `dist-npm/`: main `peephole/` (Node CommonJS `bin` shim `peephole.js` + `postinstall.js` + `optionalDependencies` on all variants, `os`/`cpu` filtered) and one `peephole-cli-<platform>-<arch>/` per binary (`os`/`cpu` set so npm fetches only the host match). Shim resolves the per-platform optional dep via `require.resolve`, execs `bin/peephole[.exe]`, forwards argv/stdio/signals, propagates exit code; honors `PEEPHOLE_BIN_PATH` escape hatch. `serve.ts` gained a `--host` option (default `127.0.0.1` loopback; `--host 0.0.0.0` binds all interfaces with a no-auth WARNING; dial-host normalization for wildcard binds). Validation: pass=true — generatorRuns, stagedPackagesValid, shimExecsHostBinary, npmPackDryRun, devStillInstalls all pass; per-target builds: darwin-arm64 65.4MB, darwin-x64 70.6MB, linux-x64 104.2MB (cross-compiled from macOS), win32-x64 120.0MB (cross-compiled, `bin/peephole.exe`).
+
+Created: `apps/cli/scripts/build-npm.ts`, `apps/cli/scripts/npm/peephole.js`, `apps/cli/scripts/npm/postinstall.js`, `apps/cli/scripts/npm/README.md`, `apps/cli/README.md`. Edited: `apps/cli/package.json` (add `build:npm` script), `apps/cli/src/commands/serve.ts` (add `--host`), `apps/cli/tsconfig.json`, `.gitignore` (ignore `dist-npm/`).
+
+**Remaining (external):** actual `npm publish` (needs `NPM_TOKEN`, publish each `peephole-cli-*` first then `peephole`) happens in CI / Phase H — not run locally. No npm org required (unscoped).
+
 **Goal:** `npm i -g peephole` installs the compiled binary on macOS/Linux/Windows servers.
 
 **Pattern (executor's):** thin main package + per-platform optional-dependency binary packages.
@@ -160,13 +166,13 @@ C.2 (win/linux) targets are present in the config (`win: nsis`, `linux: AppImage
 - Publish all from CI (Phase H) on `cli-v*` tag.
 
 **Steps:**
-1. Verify executor's exact layout: `apps/cli/package.json` (`bin` shim, `optionalDependencies`), its per-platform package generator script, and `scripts/build.ts` cross-compile targets. Copy-adapt.
-2. Cross-compile matrix via `BUN_TARGET` (`bun-linux-x64`, `bun-darwin-arm64`, …).
-3. Linux server just needs the binary + no display → `peephole serve` runs headless; user opens `http://<vps-ip>:<port>` (document binding `--host 0.0.0.0` + firewall caveat; loopback-only by default).
+1. Verify executor's exact layout: `apps/cli/package.json` (`bin` shim, `optionalDependencies`), its per-platform package generator script, and `scripts/build.ts` cross-compile targets. Copy-adapt. — done (adapted as `scripts/build-npm.ts` + `scripts/npm/{peephole.js,postinstall.js}`; wrapper staged to `dist-npm/` rather than mutating the private `apps/cli/package.json`)
+2. Cross-compile matrix via `BUN_TARGET` (`bun-linux-x64`, `bun-darwin-arm64`, …). — done (all four targets built, incl. linux-x64 + win32-x64 cross-compiled from macOS)
+3. Linux server just needs the binary + no display → `peephole serve` runs headless; user opens `http://<vps-ip>:<port>` (document binding `--host 0.0.0.0` + firewall caveat; loopback-only by default). — done (`--host` option added to `serve.ts`, default loopback, `0.0.0.0` prints no-auth WARNING)
 
 **Note:** this reuses Phase A's binary exactly — no new compile logic, just packaging + publish.
 
-**Open:** scoped `@peephole/*` packages require the npm org/scope to exist. Alt: unscoped `peephole-cli-linux-x64`. Decide at implement time.
+**Open:** RESOLVED — unscoped `peephole-cli-<platform>-<arch>` (+ wrapper `peephole`); no npm org needed. Scoped `@peephole/*` was the rejected alternative.
 
 ---
 
@@ -263,7 +269,7 @@ executor/apps/cli/package.json (bin shim + optionalDeps)→ apps/cli npm packagi
 
 ## Remaining implement-time decisions
 
-- npm scope: `@peephole/*` (needs org) vs unscoped `peephole-cli-<os>-<arch>`.
+- npm scope: **RESOLVED = unscoped** `peephole-cli-<os>-<arch>` (+ wrapper `peephole`); no npm org needed. `@peephole/*` scoped family rejected.
 - Renderer: inline `data:` screens (MVP) vs real electron-vite renderer bundle (richer chrome, needed for in-app update UI).
 - `serve` flags: confirm `--no-open` / `--client` exist; add if not.
 - VPS remote access: default loopback; document `--host 0.0.0.0` + auth implications (no token yet).
