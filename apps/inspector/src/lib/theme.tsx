@@ -1,5 +1,11 @@
 /** Theme provider + toggle, built on `next-themes` (shipped in ui). */
 import { Button } from "@workspace/ui/components/button";
+import { Kbd } from "@workspace/ui/components/kbd";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@workspace/ui/components/tooltip";
 import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
 import { ThemeProvider as NextThemeProvider, useTheme } from "next-themes";
 import { type ReactNode, useEffect, useState } from "react";
@@ -47,7 +53,12 @@ const isTypingTarget = (target: EventTarget | null) => {
 };
 
 /** Cycles light → dark → system, also bound to the `D` shortcut. */
-export const ThemeToggle = () => {
+export const ThemeToggle = ({
+  iconOnly = false,
+}: {
+  /** Drop the mode label — for narrow rails. */
+  readonly iconOnly?: boolean;
+}) => {
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
 
@@ -78,14 +89,22 @@ export const ThemeToggle = () => {
   const label = `Switch to ${next} theme`;
 
   return (
-    <Button
-      aria-label={label}
-      onClick={() => setTheme(next)}
-      size="sm"
-      variant="ghost"
-    >
-      <Icon />
-      <span className="capitalize">{current}</span>
-    </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          aria-label={label}
+          onClick={() => setTheme(next)}
+          size={iconOnly ? "icon-sm" : "sm"}
+          variant="ghost"
+        >
+          <Icon />
+          {iconOnly ? null : <span className="capitalize">{current}</span>}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent className="flex items-center gap-1.5" side="right">
+        Switch theme
+        <Kbd>D</Kbd>
+      </TooltipContent>
+    </Tooltip>
   );
 };
