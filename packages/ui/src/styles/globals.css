@@ -46,6 +46,8 @@ html {
   --sidebar-accent-foreground: oklch(0.218 0.008 223.9);
   --sidebar-border: oklch(0.925 0.005 214.3);
   --sidebar-ring: oklch(0.723 0.014 214.4);
+  --scrollbar-thumb: oklch(from var(--primary-base) l c h / 0.25);
+  --scrollbar-thumb-hover: oklch(from var(--primary-base) l c h / 0.45);
 }
 
 .dark {
@@ -82,6 +84,8 @@ html {
   --sidebar-accent-foreground: oklch(0.987 0.002 197.1);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.56 0.021 213.5);
+  --scrollbar-thumb: oklch(from var(--primary-base) l c h / 0.28);
+  --scrollbar-thumb-hover: oklch(from var(--primary-base) l c h / 0.5);
 }
 
 @theme inline {
@@ -129,6 +133,13 @@ html {
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Reserves the scrollbar track even when content does not overflow, so toggling
+   overflow (filtering a list, selecting a detail pane) cannot shift layout.
+   Ignored by engines using overlay scrollbars, which reserve nothing anyway. */
+@utility scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -138,5 +149,33 @@ html {
   }
   html {
     @apply font-sans;
+  }
+
+  /* Chromium ignores ::-webkit-scrollbar on any element that sets scrollbar-width
+     or scrollbar-color, so the standard properties are a fallback for engines
+     lacking the pseudo-element rather than a companion to it. */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+      scrollbar-width: thin;
+    }
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    background-clip: content-box;
+    border: 2px solid transparent;
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
   }
 }

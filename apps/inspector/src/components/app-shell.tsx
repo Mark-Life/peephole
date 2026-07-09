@@ -1,9 +1,25 @@
-/** App shell: fixed left nav (Memory / Sessions / Capabilities) + content pane.
+/** App shell: collapsible left nav (Sessions / Memory / Capabilities) + content pane.
  *
  * Dark-first, dense, forensic. Nav items drive the hash router; the active
- * section is highlighted. Kept deliberately light — no sidebar provider, just a
- * flex column — so the shell stays legible and fast.
+ * section is highlighted. The sidebar collapses to an icon rail (⌘B, the rail
+ * edge, or the header trigger) so wide session views get the pixels back.
  */
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@workspace/ui/components/sidebar";
 import { cn } from "@workspace/ui/lib/utils";
 import { DatabaseIcon, LayoutGridIcon, MessagesSquareIcon } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
@@ -35,73 +51,101 @@ const NAV_ITEMS: readonly NavItem[] = [
   },
 ];
 
-/** A single nav button. */
-const NavButton = ({
-  item,
-  active,
-}: {
-  readonly item: NavItem;
-  readonly active: boolean;
-}) => {
-  const Icon = item.icon;
+const SIDEBAR_COOKIE = /(?:^|;\s*)sidebar_state=(true|false)/;
+
+/** Persisted open/closed state, written by `SidebarProvider` as a cookie. */
+const readSidebarCookie = () =>
+  document.cookie.match(SIDEBAR_COOKIE)?.[1] !== "false";
+
+/** Footer row: reach note + theme toggle, both shrinking to fit the icon rail. */
+const ShellFooter = () => {
+  const collapsed = useSidebar().state === "collapsed";
   return (
-    <button
-      aria-current={active ? "page" : undefined}
+    <div
       className={cn(
-        "flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors",
-        active
-          ? "bg-primary/10 text-foreground"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+        "flex items-center gap-2",
+        collapsed ? "justify-center" : "justify-between"
       )}
-      onClick={() => navigate(item.id)}
-      type="button"
     >
-      <Icon className="size-4 shrink-0" />
-      <span className="flex flex-col">
-        <span className="font-medium">{item.label}</span>
-        <span className="text-muted-foreground text-xs">{item.hint}</span>
-      </span>
-    </button>
+      {collapsed ? null : (
+        <span className="truncate text-muted-foreground text-xs">
+          loopback only
+        </span>
+      )}
+      <ThemeToggle iconOnly={collapsed} />
+    </div>
   );
 };
 
-/** The shell: sidebar + a scrollable content region. */
+/** The shell: collapsible sidebar + a scrollable content region. */
 export const AppShell = ({ children }: { readonly children: ReactNode }) => {
   const route = useRoute();
+  const active = NAV_ITEMS.find((item) => item.id === route);
   return (
-    <div className="flex h-dvh w-full bg-background text-foreground">
-      <aside className="flex w-60 shrink-0 flex-col border-border border-r">
-        <div className="flex items-center gap-2 px-4 py-4">
-          <div className="flex size-7 items-center justify-center rounded-md bg-primary/15 font-bold text-primary text-xs">
-            P
+    <SidebarProvider
+      className="h-dvh min-h-0"
+      defaultOpen={readSidebarCookie()}
+    >
+      <Sidebar collapsible="icon">
+        <SidebarHeader>
+          <div className="flex h-8 items-center gap-2 overflow-hidden">
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/15 font-bold text-primary text-xs">
+              P
+            </div>
+            <div className="flex min-w-0 flex-col leading-tight group-data-[collapsible=icon]:hidden">
+              <span className="truncate font-semibold text-sm">Peektrace</span>
+              <span className="truncate text-muted-foreground text-xs">
+                Agent session inspector
+              </span>
+            </div>
           </div>
-          <div className="flex flex-col leading-tight">
-            <span className="font-semibold text-sm">Peektrace</span>
-            <span className="text-muted-foreground text-xs">
-              Agent session inspector
-            </span>
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {NAV_ITEMS.map((item) => (
+                  <SidebarMenuItem key={item.id}>
+                    <SidebarMenuButton
+                      aria-label={item.label}
+                      className="group-data-[collapsible=icon]:justify-center"
+                      isActive={route === item.id}
+                      onClick={() => navigate(item.id)}
+                      tooltip={`${item.label} · ${item.hint}`}
+                    >
+                      <item.icon className="size-4 shrink-0" />
+                      <span className="truncate font-medium text-sm group-data-[collapsible=icon]:hidden">
+                        {item.label}
+                      </span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+        <SidebarFooter>
+          <ShellFooter />
+        </SidebarFooter>
+        <SidebarRail />
+      </Sidebar>
+      <SidebarInset className="min-w-0 overflow-hidden">
+        <header className="flex h-11 shrink-0 items-center gap-2 border-border border-b px-3">
+          <SidebarTrigger className="-ml-1" />
+          <span className="font-medium text-sm">{active?.label}</span>
+          <span className="text-muted-foreground text-xs">{active?.hint}</span>
+        </header>
+        <div className="scrollbar-gutter-stable min-h-0 flex-1 overflow-y-auto">
+          <div
+            className={cn(
+              "mx-auto px-6 py-6",
+              route === "sessions" ? "max-w-[1800px]" : "max-w-6xl"
+            )}
+          >
+            {children}
           </div>
         </div>
-        <nav className="flex flex-col gap-1 px-2 py-2">
-          {NAV_ITEMS.map((item) => (
-            <NavButton active={route === item.id} item={item} key={item.id} />
-          ))}
-        </nav>
-        <div className="mt-auto flex items-center justify-between border-border border-t px-3 py-2">
-          <span className="text-muted-foreground text-xs">loopback only</span>
-          <ThemeToggle />
-        </div>
-      </aside>
-      <main className="flex-1 overflow-y-auto">
-        <div
-          className={cn(
-            "mx-auto px-6 py-6",
-            route === "sessions" ? "max-w-[1800px]" : "max-w-6xl"
-          )}
-        >
-          {children}
-        </div>
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 };

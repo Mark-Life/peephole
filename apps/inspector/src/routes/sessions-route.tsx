@@ -11,6 +11,7 @@
 import { useAtomValue } from "@effect-atom/atom-react";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -28,7 +29,7 @@ import { SessionList } from "./sessions/session-list";
 /** Detail-pane placeholder shown on `md+` when no session is selected. */
 const NoSelection = () => (
   <Empty
-    className="hidden md:flex md:min-h-[60vh]"
+    className="hidden border md:flex md:min-h-[60vh]"
     data-testid="session-empty-detail"
   >
     <EmptyHeader>
@@ -40,6 +41,10 @@ const NoSelection = () => (
         Pick a session from the list to inspect its context-budget forensics.
       </EmptyDescription>
     </EmptyHeader>
+    <EmptyContent className="text-muted-foreground">
+      Peak context and health verdict · budget at peak · growth timeline ·
+      loaded artifacts · redacted history.
+    </EmptyContent>
   </Empty>
 );
 
@@ -57,7 +62,7 @@ export const SessionsRoute = () => {
       <ResultView result={result}>
         {(headers) =>
           headers.length === 0 ? (
-            <Empty data-testid="sessions-placeholder">
+            <Empty className="border" data-testid="sessions-placeholder">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
                   <MessagesSquareIcon />
@@ -72,7 +77,7 @@ export const SessionsRoute = () => {
             <div className="flex flex-col gap-6 md:flex-row md:items-start">
               <div
                 className={cn(
-                  "md:sticky md:top-6 md:max-h-[calc(100dvh-3rem)] md:w-80 md:shrink-0 md:self-start md:overflow-y-auto md:pr-1",
+                  "md:scrollbar-gutter-stable md:sticky md:top-6 md:max-h-[calc(100dvh-3rem)] md:w-80 md:shrink-0 md:self-start md:overflow-y-auto md:pr-1",
                   selected ? "hidden md:block" : "block"
                 )}
               >

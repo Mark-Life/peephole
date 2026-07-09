@@ -36,11 +36,11 @@ const Meta = ({
   readonly k: string;
   readonly children: ReactNode;
 }) => (
-  <div className="rounded-md border border-border bg-card px-3 py-2">
-    <div className="text-muted-foreground text-xs uppercase tracking-wide">
+  <div className="min-w-0 rounded-md border border-border bg-card px-3 py-2">
+    <div className="truncate text-muted-foreground text-xs uppercase tracking-wide">
       {k}
     </div>
-    <div className="mt-0.5 text-sm">{children}</div>
+    <div className="wrap-anywhere mt-0.5 text-sm">{children}</div>
   </div>
 );
 
@@ -84,16 +84,19 @@ export const VerdictHeader = ({ a }: { readonly a: AnalyzedSession }) => {
       data-testid="verdict-header"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1 basis-64">
           <div className="font-semibold text-lg">
             {a.title || `${PROVIDER_LABEL[a.provider] ?? a.provider} session`}
           </div>
-          <div className="font-mono text-muted-foreground text-xs">
+          <div
+            className="truncate font-mono text-muted-foreground text-xs"
+            title={a.cwd ?? undefined}
+          >
             {a.sessionId.slice(0, ID_PREFIX)} · {a.models.join(", ")} ·{" "}
             {a.cwd ?? ""}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Badge data-testid="session-provider" variant="outline">
             {PROVIDER_LABEL[a.provider] ?? a.provider}
           </Badge>
@@ -109,7 +112,7 @@ export const VerdictHeader = ({ a }: { readonly a: AnalyzedSession }) => {
 
       <PeakGauge a={a} />
 
-      <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-2">
         <Meta k="Peak context">
           <span className={ZONE_CLASSES[zone].text}>
             {fmt(a.peakContextTokens)}
@@ -122,7 +125,7 @@ export const VerdictHeader = ({ a }: { readonly a: AnalyzedSession }) => {
             · {a.userMessageCount} user · {a.toolCallCount} tools
           </span>
         </Meta>
-        <Meta k="System+tools tax">{fmt(a.systemOverheadTokens)}</Meta>
+        <Meta k="System + tools tax">{fmt(a.systemOverheadTokens)}</Meta>
         <Meta k="Output">{fmt(a.totalOutputTokens)}</Meta>
         <Meta k="Dumb-zone dwell">
           {a.dumbZoneTurns}/{a.turnCount}
