@@ -89,9 +89,17 @@ export const startupHtml = (): string => `<!doctype html>
       @media (prefers-reduced-motion: reduce) {
         .activity::after { animation: none; transform: none; width: 100%; opacity: 0.55; }
       }
+      .titlebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 32px;
+      }
     </style>
   </head>
   <body>
+    <div class="titlebar electrobun-webkit-app-region-drag"></div>
     <main>
       <div class="mark">Pe</div>
       <h1>Starting Peektrace&hellip;</h1>

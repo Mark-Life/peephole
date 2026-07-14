@@ -33,6 +33,8 @@ const DOCS_URL = "https://github.com/Mark-Life/peektrace";
 const CRASH_VIEW_URL = "views://crash/index.html";
 const FATAL_DETAIL_MAX = 1800;
 const isMac = process.platform === "darwin";
+// Marks the inspector URL when the native titlebar overlays the web content.
+const INSET_TITLEBAR = "inset";
 
 let mainWindow: BrowserWindow | null = null;
 let connection: SidecarConnection | null = null;
@@ -64,7 +66,9 @@ const createMainWindow = (): BrowserWindow => {
     ...(isMac
       ? {
           titleBarStyle: "hiddenInset" as const,
-          trafficLightOffset: { x: 16, y: 17 },
+          // Placed in the titlebar row the web UI keeps clear (see INSET_TITLEBAR):
+          // y centers the 12px controls in that 32px row.
+          trafficLightOffset: { x: 6, y: 10 },
         }
       : { titleBarStyle: "default" as const }),
   });
@@ -93,10 +97,17 @@ const createMainWindow = (): BrowserWindow => {
   return window;
 };
 
-/** Point the window at the inspector the sidecar serves. */
+/**
+ * Point the window at the inspector the sidecar serves.
+ *
+ * On macOS the window controls float over the web content (`hiddenInset`), so
+ * the inspector is told to keep a titlebar row clear of its own chrome — it
+ * serves the same bundle to browsers, which need no such row.
+ */
 const loadInspector = (conn: SidecarConnection): void => {
   const window = mainWindow ?? createMainWindow();
-  window.webview.loadURL(`http://${conn.hostname}:${conn.port}/`);
+  const query = isMac ? `?titlebar=${INSET_TITLEBAR}` : "";
+  window.webview.loadURL(`http://${conn.hostname}:${conn.port}/${query}`);
 };
 
 /** Swap the dead web UI for the crash screen (its button drives restartServer). */
