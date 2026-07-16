@@ -10,10 +10,10 @@
  *   - `part`    : a hydrated part `{...data, id, sessionID, messageID}` that
  *                 immediately follows its owning message line.
  *
- * Token totals are ground-truth at the session level (from the DB columns);
- * per-turn usage is taken from an assistant message's `tokens` block when
- * present, else estimated. The context window is left unset — `analyze` infers
- * it from the model, exactly like Pi.
+ * Per-turn token usage is taken from an assistant message's `tokens` block when
+ * present, else estimated; those per-turn numbers drive every metric. The
+ * context window is left unset — `analyze` infers it from the model, exactly
+ * like Pi.
  */
 import { parseJsonl } from "../parse";
 import type {
@@ -32,6 +32,7 @@ type RawLine = Record<string, unknown>;
 type MutTurn = Omit<Turn, "eventIndexes"> & { eventIndexes: number[] };
 
 const WHITESPACE = /\s+/g;
+const PATH_SEP = /[\\/]/;
 
 /** Spread helper that drops a key when its value is undefined (exactOptional safe). */
 const opt = <K extends string, V>(
@@ -59,7 +60,7 @@ const num = (v: unknown): number => (typeof v === "number" ? v : 0);
 
 /** Basename of a POSIX path (last non-empty segment), or "". */
 const basename = (p: string | undefined): string =>
-  p ? (p.split("/").filter(Boolean).pop() ?? "") : "";
+  p ? (p.split(PATH_SEP).filter(Boolean).pop() ?? "") : "";
 
 /** Pretty-print a JSON value as 2-space JSON, or "" when nullish. */
 const prettyJson = (v: unknown): string =>
@@ -130,7 +131,12 @@ const toolEvents = (part: RawLine, base: EvBase): TimelineEvent[] => {
     toolName,
     ...opt("toolUseId", callId),
   };
-  const isError = str(state.status) === "error";
+  const status = str(state.status);
+  const isTerminal = status === "completed" || status === "error";
+  if (!(isTerminal || typeof state.output === "string")) {
+    return [call];
+  }
+  const isError = status === "error";
   const resultBody =
     typeof state.output === "string" ? state.output : prettyJson(state);
   const result: TimelineEvent = {
@@ -280,6 +286,7 @@ interface Meta {
 /** Mutable scan cursor: current message context for part attribution. */
 interface Cursor {
   contextRunning: number;
+  msgCreatedMs: number | undefined;
   role: string;
   turn: MutTurn | undefined;
 }
@@ -301,7 +308,7 @@ const turnForMessage = (args: {
   const cache = asObj(tokens?.cache);
   const cacheReadTokens = num(cache?.read);
   const cacheCreationTokens = num(cache?.write);
-  const groundContext = inputTokens + cacheReadTokens;
+  const groundContext = inputTokens + cacheReadTokens + cacheCreationTokens;
   const contextTokens = groundContext > 0 ? groundContext : contextRunning;
   return {
     requestId,
@@ -330,6 +337,7 @@ const applyMessage = (args: {
   cursor.role = role;
   cursor.turn = undefined;
   const createdMs = messageCreatedMs(msg);
+  cursor.msgCreatedMs = createdMs;
   const ts = isoFromMs(createdMs);
   if (ts) {
     meta.startedAt ??= ts;
@@ -363,7 +371,7 @@ const applyPart = (args: {
   const { part, index, cursor, events, compactionIndexes } = args;
   const base: EvBase = {
     index,
-    ...opt("ts", isoFromMs(messageCreatedMs(part))),
+    ...opt("ts", isoFromMs(messageCreatedMs(part) ?? cursor.msgCreatedMs)),
     ...opt("requestId", cursor.turn?.requestId),
   };
   for (const ev of partEvents({ part, role: cursor.role, base })) {
@@ -421,7 +429,12 @@ export const parseOpencodeSession = ({
   const models = new Set<string>();
   const compactionIndexes: number[] = [];
   const meta: Meta = {};
-  const cursor: Cursor = { role: "", contextRunning: 0, turn: undefined };
+  const cursor: Cursor = {
+    role: "",
+    contextRunning: 0,
+    msgCreatedMs: undefined,
+    turn: undefined,
+  };
 
   parseJsonl(text).forEach((line, index) => {
     const kind = str(line.kind);

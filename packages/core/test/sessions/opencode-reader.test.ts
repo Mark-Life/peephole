@@ -17,6 +17,7 @@ import {
   loadSessionText,
   resolveDataDir,
 } from "../../src/services/sessions/opencode/reader";
+import { opencodeParser } from "../../src/services/sessions/parsers/opencode";
 
 let dataDir: string;
 const prevEnv = process.env.PEEKTRACE_OPENCODE_DATA;
@@ -28,20 +29,65 @@ const DOCTORED_COLUMN = 9_999_999_999;
 const writeJson = (path: string, value: unknown) =>
   writeFileSync(path, JSON.stringify(value), "utf8");
 
+/** The on-disk `session`/`message`/`part` DDL, shared by every test DB. */
+const SESSION_DDL =
+  "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, version TEXT, model TEXT, agent TEXT, cost REAL, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, time_created INTEGER, time_updated INTEGER)";
+const MESSAGE_DDL =
+  "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)";
+const PART_DDL =
+  "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)";
+
+/** Build a standalone opencode DB holding one healthy text-only session. */
+const writeGoodDb = (path: string, id: string, directory: string) => {
+  const db = new Database(path);
+  db.exec(SESSION_DDL);
+  db.exec(MESSAGE_DDL);
+  db.exec(PART_DDL);
+  db.query(
+    "INSERT INTO session (id, directory, title, time_created, time_updated) VALUES (?, ?, ?, ?, ?)"
+  ).run(id, directory, "Good session", 1000, 2000);
+  db.query(
+    "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)"
+  ).run(
+    `${id}-m`,
+    id,
+    1500,
+    JSON.stringify({ role: "user", time: { created: 1500 } })
+  );
+  db.query(
+    "INSERT INTO part (id, message_id, session_id, time_created, data) VALUES (?, ?, ?, ?, ?)"
+  ).run(
+    `${id}-p`,
+    `${id}-m`,
+    id,
+    1501,
+    JSON.stringify({ type: "text", text: `hi from ${id}` })
+  );
+  db.close();
+};
+
+/** Run `fn` against a fresh temp data dir, cleaning it up afterward. */
+const withTempDir = (fn: (dir: string) => void) => {
+  const dir = mkdtempSync(join(tmpdir(), "peektrace-opencode-rb-"));
+  try {
+    fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+
+/** Parse a serialized dialect blob back into its `session`/`message`/`part` lines. */
+const dialectLines = (text: string) =>
+  text.split("\n").map((l) => JSON.parse(l) as Record<string, unknown>);
+
 beforeAll(() => {
   dataDir = mkdtempSync(join(tmpdir(), "peektrace-opencode-"));
   process.env.PEEKTRACE_OPENCODE_DATA = dataDir;
 
   const db = new Database(join(dataDir, "opencode.db"));
-  db.exec(
-    "CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, title TEXT, version TEXT, model TEXT, agent TEXT, cost REAL, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER, time_created INTEGER, time_updated INTEGER)"
-  );
-  db.exec(
-    "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)"
-  );
-  db.exec(
-    "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)"
-  );
+  db.exec(SESSION_DDL);
+  db.exec(MESSAGE_DDL);
+  db.exec(PART_DDL);
   db.query(
     "INSERT INTO session (id, directory, title, model, agent, tokens_input, tokens_cache_read, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
@@ -149,5 +195,74 @@ describe("loadSessionText (timestamp trap)", () => {
     expect(session.id).toBe("ses_tree1");
     const part = lines.find((l) => l.kind === "part");
     expect(part.text).toBe("hi from tree");
+  });
+});
+
+describe("reader robustness (never-throw / degrade)", () => {
+  test("a corrupt sibling DB does not hide a healthy DB's sessions", () => {
+    withTempDir((dir) => {
+      writeGoodDb(join(dir, "opencode.db"), "ses_good", "/good/proj");
+      writeFileSync(join(dir, "opencode-bad.db"), "not a database at all");
+      expect(listSessionRefs(dir).map((r) => r.id)).toContain("ses_good");
+      const { text, sizeBytes } = loadSessionText(dir, "ses_good");
+      expect(sizeBytes).toBeGreaterThan(0);
+      const session = dialectLines(text).find((l) => l.kind === "session");
+      expect(session?.id).toBe("ses_good");
+    });
+  });
+
+  test("a zero-byte DB is skipped, not fatal", () => {
+    withTempDir((dir) => {
+      writeGoodDb(join(dir, "opencode.db"), "ses_good", "/good/proj");
+      writeFileSync(join(dir, "opencode-empty.db"), "");
+      expect(listSessionRefs(dir).map((r) => r.id)).toContain("ses_good");
+      const part = dialectLines(loadSessionText(dir, "ses_good").text).find(
+        (l) => l.kind === "part"
+      );
+      expect(part?.text).toBe("hi from ses_good");
+    });
+  });
+
+  test("loadSessionText for an unknown id returns empty text and zero size", () => {
+    withTempDir((dir) => {
+      writeGoodDb(join(dir, "opencode.db"), "ses_good", "/good/proj");
+      const missing = loadSessionText(dir, "nonexistent-id");
+      expect(missing.text).toBe("");
+      expect(missing.sizeBytes).toBe(0);
+      expect(missing.mtimeMs).toBe(0);
+    });
+  });
+
+  test("a session living only in the second DB still resolves", () => {
+    withTempDir((dir) => {
+      writeGoodDb(join(dir, "opencode.db"), "ses_a", "/a");
+      writeGoodDb(join(dir, "opencode-2.db"), "ses_b", "/b");
+      const ids = listSessionRefs(dir).map((r) => r.id);
+      expect(ids).toContain("ses_a");
+      expect(ids).toContain("ses_b");
+      const part = dialectLines(loadSessionText(dir, "ses_b").text).find(
+        (l) => l.kind === "part"
+      );
+      expect(part?.text).toBe("hi from ses_b");
+    });
+  });
+});
+
+describe("round-trip (reader → parser)", () => {
+  test("a serialized DB session parses back into the expected structure", () => {
+    const { text } = loadSessionText(dataDir, "ses_db1");
+    const parsed = opencodeParser.parseSession({
+      text,
+      path: "/tmp/rt#ses_db1",
+      sessionId: "fallback-id",
+      slug: "/db/proj",
+    });
+    expect(parsed.provider).toBe("opencode");
+    expect(parsed.sessionId).toBe("ses_db1");
+    expect(parsed.cwd).toBe("/db/proj");
+    const prompt = parsed.events.find((e) => e.kind === "user-prompt");
+    expect(prompt?.body).toBe("hi from db");
+    // the message's truthful time.created flows through to the event.
+    expect(prompt?.ts).toBe(new Date(REAL_CREATED).toISOString());
   });
 });

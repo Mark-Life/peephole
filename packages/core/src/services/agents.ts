@@ -411,6 +411,8 @@ export const AgentRegistryLive = Layer.effect(
     const loadOpencodeTranscript = (ref: SessionFileRef) =>
       Effect.try({
         try: () => {
+          // Split on the LAST `#`: OpenCode session ids (`ses_<base62>`) never
+          // contain `#`, so lastIndexOf lands on the `<dataDir>#<id>` delimiter.
           const hash = ref.path.lastIndexOf("#");
           const dataDir =
             hash >= 0 ? ref.path.slice(0, hash) : ROOTS().opencode.projectsRoot;

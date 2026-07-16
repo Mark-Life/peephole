@@ -199,7 +199,10 @@ const sessionFromRow = (row: SessionRow): Omit<LoadedSession, "messages"> => ({
  */
 const hydrateMessage = (row: MessageRow): Json => {
   const data = parseJson(row.data) ?? {};
-  const time = data.time as Json | undefined;
+  const time =
+    data.time && typeof data.time === "object" && !Array.isArray(data.time)
+      ? (data.time as Json)
+      : undefined;
   const hasCreated = time && typeof time.created === "number";
   const withTime = hasCreated
     ? data
@@ -222,7 +225,7 @@ const loadMessagesFromDb = (
 ): LoadedMessage[] => {
   const messageRows = db
     .query(
-      "SELECT id, session_id, time_created, data FROM message WHERE session_id = ? ORDER BY time_created, id"
+      "SELECT id, session_id, time_created, data FROM message WHERE session_id = ? ORDER BY COALESCE(json_extract(data, '$.time.created'), time_created), id"
     )
     .all(sessionId) as MessageRow[];
   const partRows = db
@@ -236,10 +239,12 @@ const loadMessagesFromDb = (
     list.push(hydratePart(row));
     partsByMessage.set(row.message_id, list);
   }
-  return messageRows.map((row) => ({
-    message: hydrateMessage(row),
-    parts: partsByMessage.get(row.id) ?? [],
-  }));
+  return messageRows
+    .filter((row) => typeof row.id === "string")
+    .map((row) => ({
+      message: hydrateMessage(row),
+      parts: partsByMessage.get(row.id) ?? [],
+    }));
 };
 
 /** Find + fully load one session from any DB, or `undefined` if not present. */
@@ -248,14 +253,18 @@ const loadSessionFromDbs = (
   sessionId: string
 ): LoadedSession | undefined => {
   for (const db of dbs) {
-    const row = db
-      .query("SELECT * FROM session WHERE id = ?")
-      .get(sessionId) as SessionRow | null;
-    if (row) {
-      return {
-        ...sessionFromRow(row),
-        messages: loadMessagesFromDb(db, sessionId),
-      };
+    try {
+      const row = db
+        .query("SELECT * FROM session WHERE id = ?")
+        .get(sessionId) as SessionRow | null;
+      if (row) {
+        return {
+          ...sessionFromRow(row),
+          messages: loadMessagesFromDb(db, sessionId),
+        };
+      }
+    } catch {
+      /* skip a locked / corrupt db, keep looking in the rest */
     }
   }
   return;
@@ -264,10 +273,11 @@ const loadSessionFromDbs = (
 // ── Legacy JSON tree (best-effort; DEAD but still parses) ──────────────
 
 const JSON_EXT = /\.json$/;
+const PATH_SEP = /[\\/]/;
 
 /** The stem of a `*.json` file path (basename minus the extension). */
 const jsonStem = (path: string): string =>
-  (path.split("/").pop() ?? "").replace(JSON_EXT, "");
+  (path.split(PATH_SEP).pop() ?? "").replace(JSON_EXT, "");
 
 /** Absolute paths of `*.json` files directly in `dir` (non-recursive). */
 const jsonFilesIn = (dir: string): string[] => {
@@ -330,7 +340,19 @@ const loadSessionFromTree = (
   dataDir: string,
   sessionId: string
 ): LoadedSession | undefined => {
-  const info = listTreeSessionInfos(dataDir).find((i) => i.id === sessionId);
+  const root = join(dataDir, "storage", "session");
+  let info: Json | undefined;
+  for (const projectDir of subdirsOf(root)) {
+    const file = join(root, projectDir, `${sessionId}.json`);
+    if (!existsSync(file)) {
+      continue;
+    }
+    const parsed = readJsonFile(file);
+    if (parsed && parsed.id === sessionId) {
+      info = parsed;
+      break;
+    }
+  }
   if (!info) {
     return;
   }
@@ -405,9 +427,9 @@ export const serializeSessionToDialect = (session: LoadedSession): string => {
     }),
   ];
   for (const m of session.messages) {
-    lines.push(JSON.stringify({ kind: "message", ...m.message }));
+    lines.push(JSON.stringify({ ...m.message, kind: "message" }));
     for (const part of m.parts) {
-      lines.push(JSON.stringify({ kind: "part", ...part }));
+      lines.push(JSON.stringify({ ...part, kind: "part" }));
     }
   }
   return lines.join("\n");
@@ -422,21 +444,23 @@ export const listSessionRefs = (dataDir: string): SessionRef[] => {
   const byId = new Map<string, SessionRef>();
   try {
     for (const db of dbs) {
-      const rows = db
-        .query("SELECT id, directory, time_updated FROM session")
-        .all() as Pick<SessionRow, "id" | "directory" | "time_updated">[];
-      for (const row of rows) {
-        if (!byId.has(row.id)) {
-          byId.set(row.id, {
-            id: row.id,
-            timeUpdated: num(row.time_updated),
-            ...opt("directory", optStr(row.directory)),
-          });
+      try {
+        const rows = db
+          .query("SELECT id, directory, time_updated FROM session")
+          .all() as Pick<SessionRow, "id" | "directory" | "time_updated">[];
+        for (const row of rows) {
+          if (typeof row.id === "string" && !byId.has(row.id)) {
+            byId.set(row.id, {
+              id: row.id,
+              timeUpdated: num(row.time_updated),
+              ...opt("directory", optStr(row.directory)),
+            });
+          }
         }
+      } catch {
+        /* skip a locked / corrupt db, keep enumerating the rest */
       }
     }
-  } catch {
-    /* fall through to whatever the DBs already yielded */
   } finally {
     closeDbs(dbs);
   }

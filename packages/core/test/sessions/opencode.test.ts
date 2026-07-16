@@ -63,6 +63,8 @@ describe("parseOpencodeSession (events)", () => {
       "tool-result",
       "tool-call",
       "tool-result",
+      // a non-terminal (running) tool contributes a call but no synthetic result.
+      "tool-call",
       "attachment",
       "attachment",
       "attachment",
@@ -71,6 +73,26 @@ describe("parseOpencodeSession (events)", () => {
       "system",
       "compaction",
     ]);
+  });
+
+  test("each event inherits its owning message's ts", () => {
+    const p = parse();
+    // user part carries no time of its own; it inherits msg_user1.time.created.
+    expect(p.events[0].ts).toBe(new Date(1_784_148_745_485).toISOString());
+    const thinking = p.events.find((e) => e.kind === "assistant-thinking");
+    expect(thinking?.ts).toBe(new Date(1_784_148_745_500).toISOString());
+  });
+
+  test("a non-terminal tool part emits a call with no synthetic result", () => {
+    const p = parse();
+    const call = p.events.find(
+      (e) => e.kind === "tool-call" && e.toolUseId === "call-run"
+    );
+    expect(call?.toolName).toBe("read");
+    const result = p.events.find(
+      (e) => e.kind === "tool-result" && e.toolUseId === "call-run"
+    );
+    expect(result).toBeUndefined();
   });
 
   test("user text becomes a user-prompt, reasoning becomes thinking", () => {
@@ -140,8 +162,10 @@ describe("parseOpencodeSession (turns)", () => {
     expect(t.model).toBe("gpt-5.6-terra-fast");
     expect(t.inputTokens).toBe(8305);
     expect(t.cacheReadTokens).toBe(8192);
+    expect(t.cacheCreationTokens).toBe(128);
     expect(t.outputTokens).toBe(6);
-    expect(t.contextTokens).toBe(8305 + 8192);
+    // contextTokens includes cache WRITE, not just input + cache read.
+    expect(t.contextTokens).toBe(8305 + 8192 + 128);
   });
 });
 
